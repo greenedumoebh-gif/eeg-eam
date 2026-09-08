@@ -400,11 +400,11 @@ export function newAssetPage(
 <h1>تسجيل أصل جديد</h1>
 
 <form method="get" action="/assets/new" class="toolbar panel">
-  <div class="grow"><label>اختر نوع الأصل أولاً — تظهر خصائصه تلقائياً</label>
-    <select name="typeCode" onchange="this.form.submit()">
+  <div class="grow"><label for="pickType">اختر نوع الأصل أولاً — تظهر خصائصه في النموذج</label>
+    <select id="pickType" name="typeCode">
       <option value="">— اختر النوع —</option>${typeOpts}
     </select></div>
-  <noscript><button type="submit">عرض الخصائص</button></noscript>
+  <div><button type="submit">عرض الخصائص</button></div>
 </form>
 
 ${
