@@ -5,7 +5,9 @@ import { KvRepo } from "./kv.ts";
 
 let cached: Repo | null = null;
 
-export async function openRepo(opts?: { driver?: string; url?: string; kvPath?: string }): Promise<Repo> {
+export async function openRepo(
+  opts?: { driver?: string; url?: string; kvPath?: string },
+): Promise<Repo> {
   const driver = opts?.driver ?? config.dbDriver;
   if (driver === "postgres") {
     const url = opts?.url ?? config.databaseUrl;

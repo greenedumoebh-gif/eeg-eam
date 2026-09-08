@@ -7,11 +7,15 @@
     "start": "deno run --allow-net --allow-env --allow-read --allow-write --unstable-kv src/main.ts",
     "seed": "deno run --allow-net --allow-env --allow-read --allow-write --unstable-kv src/seed.ts",
     "test": "deno test --allow-net --allow-env --allow-read --allow-write --unstable-kv",
-    "check": "deno check src/main.ts src/seed.ts && deno lint && deno fmt --check"
+    "check": "deno check src/main.ts src/seed.ts && deno lint && deno fmt --check",
+    "bundle": "deno bundle --platform deno --keep-names -o dist/main.js src/main.ts"
   },
   "compilerOptions": {
     "strict": true,
-    "lib": ["deno.window", "deno.unstable"]
+    "lib": [
+      "deno.window",
+      "deno.unstable"
+    ]
   },
   "fmt": {
     "lineWidth": 100,
@@ -20,8 +24,12 @@
   },
   "lint": {
     "rules": {
-      "exclude": ["no-explicit-any"]
+      "exclude": [
+        "no-explicit-any"
+      ]
     }
   },
-  "unstable": ["kv"]
+  "unstable": [
+    "kv"
+  ]
 }
