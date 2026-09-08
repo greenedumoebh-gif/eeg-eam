@@ -155,14 +155,42 @@ export async function handler(req: Request, repo: Repo): Promise<Response> {
   return await handleUi(req, url, repo, user);
 }
 
-if (import.meta.main) {
-  const repo = await getRepo();
+/**
+ * بذر تلقائي عند أول تشغيل على قاعدة فارغة.
+ *
+ * على Deno Deploy تعمل عدة نسخ من التطبيق على قاعدة KV واحدة وتُقلع معاً،
+ * فلو بذرت كلها في اللحظة نفسها تتصادم. لذلك:
+ *   ١) حجز ذرّي عبر عدّاد المستودع — نسخة واحدة فقط تحصل على الرقم ١،
+ *   ٢) البذر نفسه قابل لإعادة التنفيذ بأمان (يملأ الناقص ولا يُكرر)،
+ *   ٣) أي فشل يُسجَّل ولا يُسقِط الخادم — العرض أهم من اكتمال البيانات.
+ */
+export async function ensureSeeded(repo: Repo): Promise<void> {
+  try {
+    if ((await repo.users.list({ limit: 1 })).length > 0) return;
 
-  // بذر تلقائي عند أول تشغيل على قاعدة فارغة — يجعل التجربة فورية
-  if ((await repo.users.list({ limit: 1 })).length === 0) {
+    const claim = await repo.nextSequence("bootstrap");
+    if (claim !== 1) {
+      // نسخة أخرى تبذر الآن — ننتظرها قليلاً ثم نكمل الإقلاع
+      for (let i = 0; i < 20; i++) {
+        await new Promise((r) => setTimeout(r, 500));
+        if ((await repo.users.list({ limit: 1 })).length > 0) return;
+      }
+      return;
+    }
+
     const r = await seed(repo, { withActivity: true });
     console.log("قاعدة بيانات فارغة — تم البذر التلقائي:", r);
+  } catch (err) {
+    console.error(
+      "تعذّر البذر التلقائي (الخادم يعمل):",
+      err instanceof Error ? err.message : String(err),
+    );
   }
+}
+
+if (import.meta.main) {
+  const repo = await getRepo();
+  await ensureSeeded(repo);
 
   Deno.serve({ port: config.port }, async (req) => {
     try {
