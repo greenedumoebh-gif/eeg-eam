@@ -546,63 +546,108 @@ export interface SeedResult {
   invoices: number;
 }
 
+/** يُنشئ مورداً بمعرّف ثابت ويحجز رقمه في العدّاد */
+async function createSeedSupplier(
+  repo: Repo,
+  admin: User,
+  input: Parameters<typeof contracts.createSupplier>[2],
+) {
+  const s = await contracts.createSupplier(repo, admin, input);
+  await repo.nextSequence("SUP");
+  return s;
+}
+
+/** يُنشئ عقداً بمعرّف ثابت ويحجز رقمه في عدّاد السنة */
+async function createSeedContract(
+  repo: Repo,
+  admin: User,
+  year: number,
+  input: Parameters<typeof contracts.createContract>[2],
+) {
+  const c = await contracts.createContract(repo, admin, input);
+  await repo.nextSequence(`CN-${year}`);
+  return c;
+}
+
 export async function seed(
   repo: Repo,
   opts: { wipe?: boolean; withActivity?: boolean } = {},
 ): Promise<SeedResult> {
   if (opts.wipe) await repo.wipe();
 
-  // مدير النظام يُنشأ مباشرة (لا يوجد فاعل بعد)
-  const salt = newSalt();
-  const admin: User = {
-    id: "USR-0001",
-    email: ACCOUNTS[0].email.toLowerCase(),
-    displayName: ACCOUNTS[0].name,
-    passwordSalt: salt,
-    passwordHash: await hashPassword(ACCOUNTS[0].password, salt),
-    roles: ["admin"],
-    department: ACCOUNTS[0].dept,
-    isActive: true,
-    ...stamp(),
-  };
-  await repo.users.put(admin.id, admin);
-  await repo.nextSequence("USR"); // يحجز الرقم ١
+  // مدير النظام يُنشأ مباشرة (لا يوجد فاعل بعد). إن كان موجوداً يُعاد استخدامه،
+  // فالبذر آمن للتكرار: يملأ الناقص ولا يُنشئ مكرراً.
+  const existingAdmin = await repo.users.byEmail(ACCOUNTS[0].email);
+  let admin: User;
+  if (existingAdmin) {
+    admin = existingAdmin;
+  } else {
+    const salt = newSalt();
+    admin = {
+      id: "USR-0001",
+      email: ACCOUNTS[0].email.toLowerCase(),
+      displayName: ACCOUNTS[0].name,
+      passwordSalt: salt,
+      passwordHash: await hashPassword(ACCOUNTS[0].password, salt),
+      roles: ["admin"],
+      department: ACCOUNTS[0].dept,
+      isActive: true,
+      ...stamp(),
+    };
+    await repo.users.put(admin.id, admin);
+    await repo.nextSequence("USR"); // يحجز الرقم ١
+  }
 
   for (const t of ASSET_TYPES) await repo.assetTypes.put(t.code, { ...t, ...stamp() });
   for (const s of SITES) await repo.sites.put(s.code, { ...s, ...stamp() });
 
-  await budget.createBudgetLine(repo, admin, {
-    id: "BL-2026-MAINT",
-    name: "صيانة الأجهزة المكتبية والأنظمة",
-    fiscalYear: 2026,
-    allocated: 250_000,
-  });
-  await budget.createBudgetLine(repo, admin, {
-    id: "BL-2026-CAPEX",
-    name: "توريد أجهزة ومعدات",
-    fiscalYear: 2026,
-    allocated: 500_000,
-  });
+  // معرّفات ثابتة للبذر مشتقة من السنة الجارية، مع تقديم العدّاد عند الإنشاء
+  // حتى لا يصطدم بها أول سجل يُنشئه المستخدم لاحقاً.
+  const YEAR = new Date().getUTCFullYear();
+  const SUP_1 = "SUP-0001", SUP_2 = "SUP-0002";
+  const CN_1 = `CN-${YEAR}-001`, CN_2 = `CN-${YEAR}-002`;
 
-  const supplier = await contracts.createSupplier(repo, admin, {
-    name: "شركة النموذج لأنظمة المكاتب (مورد افتراضي)",
-    commercialReg: "CR-DEMO-0001",
-    contactName: "ممثل المورد",
-    email: "supplier@demo.eeg",
-    phone: "+973 0000 0001",
-    supplyScope: "أجهزة تصوير وطباعة وصيانتها",
-  });
-  const supplier2 = await contracts.createSupplier(repo, admin, {
-    name: "مؤسسة النموذج للأنظمة الأمنية (مورد افتراضي)",
-    commercialReg: "CR-DEMO-0002",
-    contactName: "ممثل المورد",
-    email: "supplier2@demo.eeg",
-    phone: "+973 0000 0002",
-    supplyScope: "كاميرات مراقبة وأنظمة أمنية",
-  });
+  if (!(await repo.budgetLines.get("BL-2026-MAINT"))) {
+    await budget.createBudgetLine(repo, admin, {
+      id: "BL-2026-MAINT",
+      name: "صيانة الأجهزة المكتبية والأنظمة",
+      fiscalYear: 2026,
+      allocated: 250_000,
+    });
+  }
+  if (!(await repo.budgetLines.get("BL-2026-CAPEX"))) {
+    await budget.createBudgetLine(repo, admin, {
+      id: "BL-2026-CAPEX",
+      name: "توريد أجهزة ومعدات",
+      fiscalYear: 2026,
+      allocated: 500_000,
+    });
+  }
+
+  const supplier = await repo.suppliers.get(SUP_1) ??
+    await createSeedSupplier(repo, admin, {
+      id: SUP_1,
+      name: "شركة النموذج لأنظمة المكاتب (مورد افتراضي)",
+      commercialReg: "CR-DEMO-0001",
+      contactName: "ممثل المورد",
+      email: "supplier@demo.eeg",
+      phone: "+973 0000 0001",
+      supplyScope: "أجهزة تصوير وطباعة وصيانتها",
+    });
+  const supplier2 = await repo.suppliers.get(SUP_2) ??
+    await createSeedSupplier(repo, admin, {
+      id: SUP_2,
+      name: "مؤسسة النموذج للأنظمة الأمنية (مورد افتراضي)",
+      commercialReg: "CR-DEMO-0002",
+      contactName: "ممثل المورد",
+      email: "supplier2@demo.eeg",
+      phone: "+973 0000 0002",
+      supplyScope: "كاميرات مراقبة وأنظمة أمنية",
+    });
 
   // بقية الحسابات تُنشأ بعد الموردين حتى يُربط حساب المورد بسجله
   for (const a of ACCOUNTS.slice(1)) {
+    if (await repo.users.byEmail(a.email)) continue;
     await users.createUser(repo, admin, {
       email: a.email,
       displayName: a.name,
@@ -617,101 +662,113 @@ export async function seed(
   const start = new Date(today.getTime() - 60 * 24 * 3600_000).toISOString().slice(0, 10);
   const end = new Date(today.getTime() + 300 * 24 * 3600_000).toISOString().slice(0, 10);
 
-  const c1 = await contracts.createContract(repo, admin, {
-    title: "عقد صيانة أجهزة التصوير والطباعة ٢٠٢٦",
-    supplierId: supplier.id,
-    coveredTypes: ["COP", "PRN", "PLT"],
-    coveredSites: [],
-    startDate: start,
-    expiryDate: end,
-    value: 48_000,
-    billingBasis: "لكل أمر عمل",
-    responseHours: 8,
-    penaltyRatePerDay: 0.02,
-    budgetLineId: "BL-2026-MAINT",
-  });
-  await contracts.setContractStatus(repo, admin, c1.id, "ساري");
+  const c1 = await repo.contracts.get(CN_1) ??
+    await createSeedContract(repo, admin, YEAR, {
+      id: CN_1,
+      title: "عقد صيانة أجهزة التصوير والطباعة ٢٠٢٦",
+      supplierId: supplier.id,
+      coveredTypes: ["COP", "PRN", "PLT"],
+      coveredSites: [],
+      startDate: start,
+      expiryDate: end,
+      value: 48_000,
+      billingBasis: "لكل أمر عمل",
+      responseHours: 8,
+      penaltyRatePerDay: 0.02,
+      budgetLineId: "BL-2026-MAINT",
+    });
+  if (c1.status !== "ساري") await contracts.setContractStatus(repo, admin, c1.id, "ساري");
 
-  const c2 = await contracts.createContract(repo, admin, {
-    title: "عقد صيانة أنظمة المراقبة ٢٠٢٦ (دفعات ربعية)",
-    supplierId: supplier2.id,
-    coveredTypes: ["CAM"],
-    coveredSites: [],
-    startDate: start,
-    expiryDate: end,
-    value: 36_000,
-    billingBasis: "دفعات دورية",
-    billingCycle: "ربعي",
-    responseHours: 24,
-    penaltyRatePerDay: 0.01,
-    budgetLineId: "BL-2026-MAINT",
-  });
-  await contracts.setContractStatus(repo, admin, c2.id, "ساري");
+  const c2 = await repo.contracts.get(CN_2) ??
+    await createSeedContract(repo, admin, YEAR, {
+      id: CN_2,
+      title: "عقد صيانة أنظمة المراقبة ٢٠٢٦ (دفعات ربعية)",
+      supplierId: supplier2.id,
+      coveredTypes: ["CAM"],
+      coveredSites: [],
+      startDate: start,
+      expiryDate: end,
+      value: 36_000,
+      billingBasis: "دفعات دورية",
+      billingCycle: "ربعي",
+      responseHours: 24,
+      penaltyRatePerDay: 0.01,
+      budgetLineId: "BL-2026-MAINT",
+    });
+  if (c2.status !== "ساري") await contracts.setContractStatus(repo, admin, c2.id, "ساري");
 
-  const created = await assets.receiveFromContract(repo, admin, c1.id, [
-    {
-      typeCode: "COP",
-      name: "آلة تصوير — إدارة شؤون الطلبة",
-      siteCode: "HQ-001",
-      serialNumber: "SN-COP-77120",
-      cost: 2400,
-      attributes: { print_type: "ألوان", copy_speed: 45, max_paper: "A3", meter_at_install: 0 },
-    },
-    {
-      typeCode: "COP",
-      name: "آلة تصوير — مكتبة المدرسة الأولى",
-      siteCode: "SCH-005",
-      serialNumber: "SN-COP-77121",
-      cost: 2200,
-      attributes: {
-        print_type: "أبيض وأسود",
-        copy_speed: 30,
-        max_paper: "A4",
-        meter_at_install: 1250,
+  const alreadyHasAssets = (await repo.assets.list({ limit: 1 })).length > 0;
+  if (!alreadyHasAssets) {
+    await assets.receiveFromContract(repo, admin, c1.id, [
+      {
+        typeCode: "COP",
+        name: "آلة تصوير — إدارة شؤون الطلبة",
+        siteCode: "HQ-001",
+        serialNumber: "SN-COP-77120",
+        cost: 2400,
+        attributes: { print_type: "ألوان", copy_speed: 45, max_paper: "A3", meter_at_install: 0 },
       },
-    },
-    {
-      typeCode: "PRN",
-      name: "طابعة شبكية — غرفة المعلمين",
-      siteCode: "SCH-018",
-      serialNumber: "SN-PRN-31004",
-      cost: 850,
-      attributes: { print_speed: 28, duplex: true, networked: true, ip_address: "10.20.18.41" },
-    },
-  ]);
-  await assets.createAsset(repo, admin, {
-    typeCode: "CAM",
-    name: "كاميرا مدخل المبنى الرئيسي",
-    siteCode: "HQ-001",
-    serialNumber: "SN-CAM-90211",
-    acquisitionCost: 320,
-    sourceContractId: c2.id,
-    attributes: { resolution: "1080p", cam_type: "قبّة", mount_position: "المدخل الشمالي" },
-  });
-  await assets.createAsset(repo, admin, {
-    typeCode: "PBX",
-    name: "بدالة المبنى الرئيسي",
-    siteCode: "HQ-001",
-    serialNumber: "SN-PBX-10001",
-    acquisitionCost: 9800,
-    attributes: { system_model: "OmniPCX", capacity: 240, ports_used: 187 },
-  });
+      {
+        typeCode: "COP",
+        name: "آلة تصوير — مكتبة المدرسة الأولى",
+        siteCode: "SCH-005",
+        serialNumber: "SN-COP-77121",
+        cost: 2200,
+        attributes: {
+          print_type: "أبيض وأسود",
+          copy_speed: 30,
+          max_paper: "A4",
+          meter_at_install: 1250,
+        },
+      },
+      {
+        typeCode: "PRN",
+        name: "طابعة شبكية — غرفة المعلمين",
+        siteCode: "SCH-018",
+        serialNumber: "SN-PRN-31004",
+        cost: 850,
+        attributes: { print_speed: 28, duplex: true, networked: true, ip_address: "10.20.18.41" },
+      },
+    ]);
+    await assets.createAsset(repo, admin, {
+      typeCode: "CAM",
+      name: "كاميرا مدخل المبنى الرئيسي",
+      siteCode: "HQ-001",
+      serialNumber: "SN-CAM-90211",
+      acquisitionCost: 320,
+      sourceContractId: c2.id,
+      attributes: { resolution: "1080p", cam_type: "قبّة", mount_position: "المدخل الشمالي" },
+    });
+    await assets.createAsset(repo, admin, {
+      typeCode: "PBX",
+      name: "بدالة المبنى الرئيسي",
+      siteCode: "HQ-001",
+      serialNumber: "SN-PBX-10001",
+      acquisitionCost: 9800,
+      attributes: { system_model: "OmniPCX", capacity: 240, ports_used: 187 },
+    });
+  }
 
   const result: SeedResult = {
     users: ACCOUNTS.length,
     sites: SITES.length,
     assetTypes: ASSET_TYPES.length,
-    suppliers: 2,
-    contracts: 2,
-    assets: created.length + 2,
+    suppliers: (await repo.suppliers.list()).length,
+    contracts: (await repo.contracts.list()).length,
+    assets: (await repo.assets.list()).length,
     budgetLines: 2,
     tickets: 0,
     workOrders: 0,
     invoices: 0,
   };
 
-  if (opts.withActivity) {
+  // الحركة التمهيدية لا تُنشأ إلا مرة واحدة
+  if (opts.withActivity && (await repo.tickets.list({ limit: 1 })).length === 0) {
     Object.assign(result, await seedActivity(repo));
+  } else {
+    result.tickets = (await repo.tickets.list()).length;
+    result.workOrders = (await repo.workOrders.list()).length;
+    result.invoices = (await repo.invoices.list()).length;
   }
 
   return result;
